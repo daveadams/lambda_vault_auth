@@ -1,8 +1,8 @@
-require_relative '../lib/lambdavault'
+require_relative '../lib/lambda_vault_auth'
 
 describe LambdaVaultAuth do
-  it 'responds to Vault' do
-    expect(described_class.respond_to?(:Vault)).to be true
+  it 'responds to #vault' do
+    expect(described_class.respond_to?(:vault)).to be true
   end
 end
 
@@ -11,11 +11,11 @@ describe LambdaVaultAuth::Vaulter do
     {
       'VAULT_ADDR' => 'vault_addr',
       'VAULT_AUTH_PROVIDER' => 'auth_provider',
-      'VAULT_AUTH_ROLE' => 'auth_role'
+      'VAULT_AUTH_ROLE' => 'auth_role',
+      'VAULT_AUTH_HEADER' => 'vault.insops.net',
     }
   end
-  let(:sts_client) { Aws::STS::Client.new stub_responses: true }
-  subject(:vaulter) { LambdaVaultAuth::Vaulter.new(sts_client, vault_env) }
+  subject(:vaulter) { LambdaVaultAuth::Vaulter.new(vault_env) }
 
   it 'loads vault configuration from the environment' do
     expect(Vault::Client).to receive(:new).with(address: vault_env['VAULT_ADDR'])
@@ -28,38 +28,43 @@ describe LambdaVaultAuth::Vaulter do
   describe 'with a stubbed vault client' do
     let(:vault_stub) { double('vault_client') }
     let(:logical_stub) { double('logical') }
+    let(:vault_auth_stub) { double('auth') }
     let(:secret_stub) { double('secret') }
     let(:secret_warnings) { {} }
     let(:auth_client_token) { 'client_token' }
     let(:secret_lease_duration) { 500 }
-
     let(:auth_stub) { double('auth') }
     let(:auth_is_renewable) { true }
+    let(:aws_creds) { Aws::Credentials.new('key-id','secret-key','session-token') }
 
     before do
       allow(Vault::Client).to receive(:new).with(address: vault_env['VAULT_ADDR']).and_return(vault_stub)
       allow(vault_stub).to receive(:logical).and_return(logical_stub)
+      allow(vault_stub).to receive(:auth).and_return(vault_auth_stub)
+      allow(vault_auth_stub).to receive(:aws_iam).and_return(secret_stub)
       allow(secret_stub).to receive(:warnings).and_return(secret_warnings)
       allow(secret_stub).to receive(:auth).and_return(auth_stub)
       allow(secret_stub).to receive(:lease_duration).and_return(secret_lease_duration)
-
       allow(auth_stub).to receive(:renewable).and_return(auth_is_renewable)
       allow(auth_stub).to receive(:client_token).and_return(auth_client_token)
     end
 
-    it 'gets called w/ sts params' do
-      req = sts_client.get_caller_identity.context.http_request
+    it 'gets called w/ correct parameters' do
+      expect(vault_auth_stub).
+        to receive(:aws_iam).
+        with(
+          'auth_role',
+          an_instance_of(Aws::Credentials),
+          'vault.insops.net',
+          LambdaVaultAuth::Vaulter::DEFAULT_STS_URI,
+          '/v1/auth/auth_provider/login',
+        ).
+        and_return(secret_stub)
 
-      expected_data = hash_including(
-        :iam_request_body,
-        :iam_request_headers,
-        :iam_request_url,
-        iam_http_request_method: req.http_method,
-        role: 'auth_role'
-      )
-      expect(logical_stub).to receive(:write).with('auth/auth_provider/login',
-                                                   expected_data).and_return(secret_stub)
-      expect(vault_stub).to receive(:token=).with(auth_client_token)
+      expect(vault_stub).
+        to receive(:token=).
+        with(auth_client_token)
+
       vaulter.authenticate!
     end
 
