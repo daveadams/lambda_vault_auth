@@ -16,8 +16,7 @@ class LambdaVaultAuth
 
     DEFAULT_STS_URI = 'https://sts.amazonaws.com'.freeze
 
-    def initialize(sts = Aws::STS::Client.new, env = ENV)
-      @sts = sts
+    def initialize(env = ENV)
       @client = new_client_from_environment(env)
 
       # TODO: Make the following configurable
@@ -81,7 +80,6 @@ class LambdaVaultAuth
   # to help manage the lifecycle of a vault and access the credentials
   def self.vault
     @vault ||= Vaulter.new
-    @sts ||= Aws::STS::Client.new
 
     return @vault.client unless @vault.expired?
 
